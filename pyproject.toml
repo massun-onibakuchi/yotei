@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "yotei"
 version = "0.1.0"
-description = "Container-local scheduler for Codex tasks with Telegram notifications"
+description = "Scheduler for unattended Codex tasks with Telegram notifications"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []

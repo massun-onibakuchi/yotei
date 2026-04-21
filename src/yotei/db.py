@@ -9,6 +9,13 @@ import sqlite3
 import uuid
 
 
+SCHEMA_VERSION = 1
+
+
+class SchemaVersionError(RuntimeError):
+    """Raised when the state database schema cannot be used by this binary."""
+
+
 @dataclass(slots=True)
 class TaskRecord:
     task_id: str
@@ -35,6 +42,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
 
 
 def initialize(connection: sqlite3.Connection) -> None:
+    _reject_newer_schema_if_present(connection)
     connection.executescript(
         """
         CREATE TABLE IF NOT EXISTS tasks (
@@ -77,6 +85,7 @@ def initialize(connection: sqlite3.Connection) -> None:
         """
     )
     _add_column_if_missing(connection, "tasks", "enabled", "INTEGER NOT NULL DEFAULT 1")
+    _apply_migrations(connection)
     connection.commit()
 
 
@@ -344,6 +353,67 @@ def _add_column_if_missing(connection: sqlite3.Connection, table: str, column: s
     if any(row["name"] == column for row in rows):
         return
     connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _apply_migrations(connection: sqlite3.Connection) -> None:
+    _ensure_schema_version_table(connection)
+    current_version = schema_version(connection)
+    if current_version > SCHEMA_VERSION:
+        raise SchemaVersionError(
+            f"State database schema version {current_version} is newer than supported version {SCHEMA_VERSION}."
+        )
+    for version in range(current_version + 1, SCHEMA_VERSION + 1):
+        _run_migration(connection, version)
+        _record_schema_version(connection, version)
+
+
+def _ensure_schema_version_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def _reject_newer_schema_if_present(connection: sqlite3.Connection) -> None:
+    if not _table_exists(connection, "schema_migrations"):
+        return
+    current_version = schema_version(connection)
+    if current_version > SCHEMA_VERSION:
+        raise SchemaVersionError(
+            f"State database schema version {current_version} is newer than supported version {SCHEMA_VERSION}."
+        )
+
+
+def schema_version(connection: sqlite3.Connection) -> int:
+    row = connection.execute("SELECT MAX(version) AS version FROM schema_migrations").fetchone()
+    if row is None or row["version"] is None:
+        return 0
+    return int(row["version"])
+
+
+def _run_migration(connection: sqlite3.Connection, version: int) -> None:
+    if version == 1:
+        return
+    raise SchemaVersionError(f"No migration registered for schema version {version}.")
+
+
+def _record_schema_version(connection: sqlite3.Connection, version: int) -> None:
+    connection.execute(
+        "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+        (version, utc_now()),
+    )
+
+
+def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
+    row = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
 
 
 def new_id() -> str:

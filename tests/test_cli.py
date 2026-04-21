@@ -104,6 +104,24 @@ def test_invalid_schedule_returns_user_facing_error(tmp_path: Path, capsys) -> N
     assert "Traceback" not in captured.err
 
 
+def test_newer_schema_version_returns_user_facing_error(tmp_path: Path, capsys) -> None:
+    config_path = _write_config(tmp_path)
+    with closing(connect(config_path.parent / "state.sqlite3")) as connection:
+        connection.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
+        connection.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+            (999, "2026-04-21T00:00:00Z"),
+        )
+        connection.commit()
+
+    exit_code = main(["--config", str(config_path), "status"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "newer than supported" in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_set_default_model(tmp_path: Path, capsys) -> None:
     config_path = _write_config(tmp_path)
     exit_code = main(["--config", str(config_path), "config", "set-default-model", "gpt-5.4-mini"])

@@ -30,6 +30,7 @@ The Yolobox PR already has a mostly reusable Python package, CLI, SQLite state m
 - Python version: keep `>=3.12` initially unless packaging tests show a lower version is needed
 - Default config path: `${XDG_CONFIG_HOME:-~/.config}/yotei/config.toml`
 - Default data path: `${XDG_STATE_HOME:-~/.local/state}/yotei`
+- macOS/Linux path policy: honor XDG variables on both platforms; when unset, use the same `~/.config` and `~/.local/state` defaults on macOS and Linux for predictable portable behavior rather than switching to macOS `Application Support`
 - Repository-local config path: discover `.automation/yotei/config.toml` from the current directory upward
 - Legacy compatibility config path: discover `.automation/scheduled-agent-runner/config.toml` after the new repo-local path
 - Discovery order:
@@ -46,6 +47,16 @@ The Yolobox PR already has a mostly reusable Python package, CLI, SQLite state m
 - Runner ownership: one active scheduler loop per state database for the first portable release; this is documented first, with enforcement deferred to a later ticket
 - Schedule grammar: keep `once in <int>m|h` as a documented alias for one-time relative schedules
 - Backward compatibility: preserve repository-local config discovery and avoid leaking resolved secrets when rewriting config
+
+## Current Verification Status
+
+The current dedicated repo contains only research and planning Markdown. There is no local `pyproject.toml`, package source, or test suite yet, so runtime coverage cannot be measured until Ticket 1 imports the baseline implementation and tests.
+
+Required verification once code exists:
+
+- `uv run --extra dev pytest --cov=yotei --cov-fail-under=80`
+- `uv run python -m compileall src`
+- installed-tool smoke checks from Tickets 12 and 14 on Linux and macOS where CI capacity allows
 
 ## Ticket Plan
 
@@ -65,11 +76,13 @@ Chunk:
   - `pyproject.toml`
   - relevant specs/docs that describe scheduler behavior
 - Do not copy Yolobox-only project structure such as `.devcontainer`, `.takopi`, `.agents`, or checkout-specific workflow files.
+- Ensure local project metadata anchors pytest to this repository instead of inheriting any parent workspace pytest configuration.
+- Add the dev test dependencies needed for coverage measurement.
 - Keep any local `bin/yotei` wrapper only if useful for development, and document that the console script is the install path.
 
 Acceptance:
 
-- `uv run --extra dev pytest` passes.
+- `uv run --extra dev pytest --cov=yotei --cov-fail-under=80` passes.
 - `uv run python -m compileall src` passes.
 - Existing CLI behavior from the PR is available through the renamed package entry point.
 
@@ -130,10 +143,12 @@ Chunk:
 - Add default state/log paths under `${XDG_STATE_HOME:-~/.local/state}/yotei`.
 - Preserve the existing behavior where relative `paths.state_db` and `paths.logs_dir` resolve relative to the config file directory.
 - Keep legacy `.automation/scheduled-agent-runner` discovery for compatibility.
+- Keep path expansion based on `Path.home()`/environment variables, not Linux-only assumptions such as `/home/<user>`.
 
 Acceptance:
 
 - Tests cover env var discovery, parent-directory repo config discovery, XDG config discovery, XDG state defaults, and relative path resolution.
+- Tests cover the default path policy under Linux and macOS-style home directories by controlling `HOME`, `XDG_CONFIG_HOME`, and `XDG_STATE_HOME`.
 - Running outside a repo checkout uses the user config path.
 - Tests cover invalid timezone handling with a clear configuration error.
 
@@ -320,14 +335,15 @@ Confidence: 87
 
 Priority: P2
 
-Dependencies: Ticket 1
+Dependencies: Tickets 1 and 5
 
-Parallelizable: yes.
+Parallelizable: yes, after Ticket 5; it should not touch scheduler execution or config discovery.
 
 Chunk:
 
 - Preserve the non-fatal Telegram behavior.
-- Append concise notification failure details to `runs.error_text`.
+- Add a nullable `runs.notification_error` field through the migration framework.
+- Record concise notification failure details in `runs.notification_error`, not `runs.error_text`, so successful Codex runs do not look like task failures.
 - Avoid storing bot tokens in logs or run summaries.
 - Do not add a structured scheduler logging system in this ticket.
 
@@ -335,11 +351,12 @@ Acceptance:
 
 - Tests prove notification exceptions do not fail Codex tasks.
 - Tests prove failure details are recorded without leaking the token.
+- Tests prove notification failures on otherwise successful runs keep the run status successful.
 
 Risks:
 
 - Run metadata can become noisy if notification failures are frequent. Keep entries concise.
-- If `runs.error_text` starts to blur successful-run semantics, add a dedicated `notification_error` field in a later schema ticket.
+- Adding a field for notification-only errors requires a schema migration, which is why this ticket depends on Ticket 5.
 
 Confidence: 84
 
@@ -390,10 +407,12 @@ Chunk:
   - config discovery from user-level path
   - basic `config get-default-model`
 - Keep it hermetic with temporary `XDG_CONFIG_HOME` and `XDG_STATE_HOME`.
+- Run the smoke check in a temp current directory outside the repository and parent workspace so parent pytest/project config and repo-local `.automation` paths cannot influence it.
 
 Acceptance:
 
 - The smoke path works from a temporary directory that has no `.automation` parent.
+- The smoke path passes on Linux and macOS CI, or the ticket documents any unsupported platform behavior explicitly before release.
 - The test does not depend on a real Codex invocation.
 
 Risks:
@@ -452,6 +471,7 @@ Acceptance:
 
 - The smoke path works from a temporary directory that has no `.automation` parent.
 - It verifies user-level config/state and persisted workspace behavior together.
+- It passes on Linux and macOS CI, or the ticket documents any unsupported platform behavior explicitly before release.
 - It does not depend on a real Codex invocation.
 
 Risks:
@@ -513,8 +533,11 @@ Can run after Ticket 1 in parallel:
 
 - Ticket 2, because it is now only metadata plus a README skeleton
 - Ticket 9
-- Ticket 10
 - Ticket 11
+
+Can run after Ticket 5 in parallel:
+
+- Ticket 10, because notification metadata depends on schema migration support
 
 Must remain sequential:
 

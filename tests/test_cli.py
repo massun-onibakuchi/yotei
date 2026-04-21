@@ -113,6 +113,36 @@ def test_set_default_model(tmp_path: Path, capsys) -> None:
     assert "default_model = \"gpt-5.4-mini\"" in config_path.read_text(encoding="utf-8")
 
 
+def test_config_init_writes_default_user_config(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
+
+    exit_code = main(["config", "init"])
+
+    assert exit_code == 0
+    config_path = tmp_path / "xdg-config" / "yotei" / "config.toml"
+    assert str(config_path) in capsys.readouterr().out
+    config = load_config(config_path)
+    assert config.codex.default_model == "gpt-5.4"
+    assert config.telegram.bot_token_source == "env:TG_BOT_TOKEN"
+    assert config.paths.state_db == tmp_path / "xdg-state" / "yotei" / "state.sqlite3"
+
+
+def test_config_init_path_and_overwrite_guard(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "custom" / "config.toml"
+
+    assert main(["config", "init", "--path", str(config_path)]) == 0
+    initial_text = config_path.read_text(encoding="utf-8")
+
+    assert main(["config", "init", "--path", str(config_path)]) == 1
+    assert config_path.read_text(encoding="utf-8") == initial_text
+    assert "Use --force" in capsys.readouterr().err
+
+    config_path.write_text("stale", encoding="utf-8")
+    assert main(["config", "init", "--path", str(config_path), "--force"]) == 0
+    assert 'bot_token = "env:TG_BOT_TOKEN"' in config_path.read_text(encoding="utf-8")
+
+
 def test_set_default_model_preserves_env_secret_reference(tmp_path: Path, monkeypatch) -> None:
     config_path = _write_config(tmp_path, bot_token="env:TG_BOT_TOKEN")
     monkeypatch.setenv("TG_BOT_TOKEN", "secret-token")

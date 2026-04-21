@@ -13,6 +13,26 @@ CONFIG_ENV_VAR = "YOTEI_CONFIG"
 LEGACY_CONFIG_ENV_VAR = "SCHEDULED_AGENT_RUNNER_CONFIG"
 REPO_CONFIG_PATH = Path(".automation/yotei/config.toml")
 LEGACY_REPO_CONFIG_PATH = Path(".automation/scheduled-agent-runner/config.toml")
+DEFAULT_CONFIG_TEXT = """
+[codex]
+binary = "codex"
+default_model = "gpt-5.4"
+allowed_models = ["gpt-5.4", "gpt-5.4-mini"]
+
+[scheduler]
+timezone = "UTC"
+poll_seconds = 30
+error_backoff_seconds = 5
+
+[telegram]
+bot_token = "env:TG_BOT_TOKEN"
+
+[notifications]
+send_on_start = true
+send_on_success = true
+send_on_failure = true
+summary_chars = 1200
+""".strip() + "\n"
 
 
 @dataclass(slots=True)
@@ -168,6 +188,15 @@ def _validate_timezone(timezone: str) -> None:
 def save_config(config: AppConfig) -> None:
     config.config_path.parent.mkdir(parents=True, exist_ok=True)
     config.config_path.write_text(render_config(config), encoding="utf-8")
+
+
+def init_config(path: Path | None = None, *, force: bool = False) -> Path:
+    target_path = path or user_config_path()
+    if target_path.exists() and not force:
+        raise FileExistsError(f"Config already exists at {target_path}. Use --force to overwrite.")
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(DEFAULT_CONFIG_TEXT, encoding="utf-8")
+    return target_path
 
 
 def render_config(config: AppConfig) -> str:

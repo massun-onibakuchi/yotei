@@ -6,10 +6,13 @@ from dataclasses import dataclass
 from pathlib import Path
 import os
 import tomllib
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 CONFIG_ENV_VAR = "YOTEI_CONFIG"
-DEFAULT_CONFIG_PATH = Path(".automation/yotei/config.toml")
+LEGACY_CONFIG_ENV_VAR = "SCHEDULED_AGENT_RUNNER_CONFIG"
+REPO_CONFIG_PATH = Path(".automation/yotei/config.toml")
+LEGACY_REPO_CONFIG_PATH = Path(".automation/scheduled-agent-runner/config.toml")
 
 
 @dataclass(slots=True)
@@ -66,23 +69,24 @@ def _resolve_path(config_path: Path, raw_path: str) -> Path:
 def load_config(config_path: Path | None = None) -> AppConfig:
     config_path = (config_path or discover_config_path()).resolve()
     if not config_path.exists():
-        raise FileNotFoundError(
-            f"Config file not found at {config_path}. Copy or edit .automation/yotei/config.toml first."
-        )
+        raise FileNotFoundError(f"Config file not found at {config_path}. Create a config file or pass --config.")
 
     data = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    paths = data["paths"]
+    paths = data.get("paths", {})
     codex = data["codex"]
     scheduler = data.get("scheduler", {})
     telegram = data["telegram"]
     raw_bot_token = telegram.get("bot_token", "")
     notifications = data.get("notifications", {})
+    timezone = scheduler.get("timezone", "UTC")
+    _validate_timezone(timezone)
+    default_state_dir = user_state_dir()
 
     app_config = AppConfig(
         config_path=config_path,
         paths=PathsConfig(
-            state_db=_resolve_path(config_path, paths["state_db"]),
-            logs_dir=_resolve_path(config_path, paths["logs_dir"]),
+            state_db=_resolve_config_path(config_path, paths.get("state_db"), default_state_dir / "state.sqlite3"),
+            logs_dir=_resolve_config_path(config_path, paths.get("logs_dir"), default_state_dir / "logs"),
         ),
         codex=CodexConfig(
             binary=codex.get("binary", "codex"),
@@ -90,7 +94,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
             allowed_models=list(codex.get("allowed_models", [codex["default_model"]])),
         ),
         scheduler=SchedulerConfig(
-            timezone=scheduler.get("timezone", "UTC"),
+            timezone=timezone,
             poll_seconds=int(scheduler.get("poll_seconds", 30)),
             error_backoff_seconds=int(scheduler.get("error_backoff_seconds", 5)),
         ),
@@ -111,13 +115,54 @@ def discover_config_path(start_dir: Path | None = None) -> Path:
     env_path = os.environ.get(CONFIG_ENV_VAR)
     if env_path:
         return Path(env_path)
+    legacy_env_path = os.environ.get(LEGACY_CONFIG_ENV_VAR)
+    if legacy_env_path:
+        return Path(legacy_env_path)
 
     current = (start_dir or Path.cwd()).resolve()
-    for directory in [current, *current.parents]:
-        candidate = directory / DEFAULT_CONFIG_PATH
+    search_dirs = [current, *current.parents]
+    for directory in search_dirs:
+        candidate = directory / REPO_CONFIG_PATH
         if candidate.exists():
             return candidate
-    return current / DEFAULT_CONFIG_PATH
+    for directory in search_dirs:
+        candidate = directory / LEGACY_REPO_CONFIG_PATH
+        if candidate.exists():
+            return candidate
+    return user_config_path()
+
+
+def user_config_path() -> Path:
+    base = _xdg_base_path("XDG_CONFIG_HOME", Path.home() / ".config")
+    return base / "yotei" / "config.toml"
+
+
+def user_state_dir() -> Path:
+    base = _xdg_base_path("XDG_STATE_HOME", Path.home() / ".local" / "state")
+    return base / "yotei"
+
+
+def _xdg_base_path(env_var: str, default: Path) -> Path:
+    raw_value = os.environ.get(env_var)
+    if not raw_value:
+        return default
+    candidate = Path(raw_value)
+    if not candidate.is_absolute():
+        return default
+    return candidate
+
+
+def _resolve_config_path(config_path: Path, raw_path: str | None, default_path: Path) -> Path:
+    if raw_path is None:
+        return default_path
+    return _resolve_path(config_path, raw_path)
+
+
+def _validate_timezone(timezone: str) -> None:
+    try:
+        ZoneInfo(timezone)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"Invalid timezone {timezone!r}. Use an IANA timezone such as 'UTC'.") from exc
 
 
 def save_config(config: AppConfig) -> None:

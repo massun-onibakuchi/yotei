@@ -13,7 +13,7 @@ import traceback
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from . import __version__
-from .config import CONFIG_ENV_VAR, load_config, update_default_model
+from .config import CONFIG_ENV_VAR, init_config, load_config, update_default_model
 from .db import (
     TaskRecord,
     advance_task_schedule,
@@ -87,6 +87,9 @@ def build_parser() -> ArgumentParser:
 
     config_parser = subparsers.add_parser("config", help="Read or update config defaults")
     config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
+    init_parser = config_subparsers.add_parser("init", help="Create a user-level config file")
+    init_parser.add_argument("--path", help="Config path to write. Defaults to the user config path.")
+    init_parser.add_argument("--force", action="store_true", help="Overwrite an existing config file")
     config_subparsers.add_parser("get-default-model", help="Print the default model")
     set_model = config_subparsers.add_parser("set-default-model", help="Update the default model")
     set_model.add_argument("model", help="Model name from the allowlist")
@@ -102,6 +105,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     connection = None
     try:
+        if args.command == "config" and args.config_command == "init":
+            return _handle_config_init(args)
         config = load_config(Path(args.config) if args.config else None)
         connection = connect(config.paths.state_db)
         initialize(connection)
@@ -267,6 +272,12 @@ def _handle_config(args) -> int:
         print(config.codex.default_model)
         return 0
     raise AssertionError("Unreachable config command.")
+
+
+def _handle_config_init(args) -> int:
+    config_path = init_config(Path(args.path) if args.path else None, force=args.force)
+    print(f"Wrote config to {config_path}.")
+    return 0
 
 
 def _handle_run(args, config, connection, workspace_root: Path) -> int:

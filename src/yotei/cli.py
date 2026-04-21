@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from . import __version__
 from .config import CONFIG_ENV_VAR, init_config, load_config, update_default_model
 from .db import (
+    SchemaVersionError,
     TaskRecord,
     advance_task_schedule,
     connect,
@@ -129,7 +130,15 @@ def main(argv: list[str] | None = None) -> int:
             return _handle_run(args, config, connection, Path.cwd())
         parser.error(f"Unknown command {args.command!r}")
         return 2
-    except (FileNotFoundError, KeyError, OSError, ValueError, sqlite3.Error, ZoneInfoNotFoundError) as exc:
+    except (
+        FileNotFoundError,
+        KeyError,
+        OSError,
+        SchemaVersionError,
+        ValueError,
+        sqlite3.Error,
+        ZoneInfoNotFoundError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     finally:

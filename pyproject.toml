@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yotei"
+version = "0.1.0"
+description = "Container-local scheduler for Codex tasks with Telegram notifications"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+yotei = "yotei.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-cov>=5.0.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

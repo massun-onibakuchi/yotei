@@ -170,6 +170,7 @@ def update_task(
     session_mode: str,
     session_id: str | None,
     chat_id: str,
+    workspace_root: str | None,
     next_run_at: str,
 ) -> int:
     cursor = connection.execute(
@@ -184,6 +185,7 @@ def update_task(
             session_mode = ?,
             session_id = ?,
             chat_id = ?,
+            workspace_root = ?,
             next_run_at = ?,
             updated_at = ?
         WHERE task_id = ?
@@ -198,6 +200,7 @@ def update_task(
             session_mode,
             session_id,
             chat_id,
+            workspace_root,
             next_run_at,
             utc_now(),
             task_id,

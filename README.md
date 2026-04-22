@@ -5,12 +5,15 @@ Yotei is a small scheduler for unattended Codex tasks.
 ## Install
 
 ```sh
-uv tool install -U yotei
+uv tool install -U yotei-runner
 ```
 
 Yotei expects the `codex` CLI to already be installed and authenticated on the
 machine where scheduled runs execute. The scheduler invokes the configured Codex
 binary directly and does not manage Codex login state for you.
+
+The published package name is `yotei-runner`. The installed command remains
+`yotei`.
 
 ## Quick Start
 
@@ -134,7 +137,7 @@ Back up these paths together:
 
 To restore on another machine:
 
-1. Install `yotei` and make sure the target machine has a working `codex` CLI.
+1. Install `yotei-runner` and make sure the target machine has a working `codex` CLI.
 2. Restore the config file, state DB, and logs into the same XDG locations or
    pass `--config` explicitly.
 3. Run `yotei status` and repair any task whose stored workspace path is no

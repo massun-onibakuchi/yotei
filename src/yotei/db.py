@@ -9,7 +9,7 @@ import sqlite3
 import uuid
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class SchemaVersionError(RuntimeError):
@@ -74,6 +74,7 @@ def initialize(connection: sqlite3.Connection) -> None:
             log_path TEXT NOT NULL,
             session_id TEXT,
             error_text TEXT,
+            notification_error TEXT,
             started_at TEXT NOT NULL,
             finished_at TEXT
         );
@@ -342,6 +343,21 @@ def update_run_log_path(connection: sqlite3.Connection, run_id: str, log_path: s
     connection.commit()
 
 
+def record_notification_error(connection: sqlite3.Connection, run_id: str, message: str) -> None:
+    connection.execute(
+        """
+        UPDATE runs
+        SET notification_error = CASE
+            WHEN notification_error IS NULL OR notification_error = '' THEN ?
+            ELSE notification_error || '; ' || ?
+        END
+        WHERE run_id = ?
+        """,
+        (message, message, run_id),
+    )
+    connection.commit()
+
+
 def mark_interrupted_runs(connection: sqlite3.Connection) -> None:
     connection.execute(
         """
@@ -408,6 +424,9 @@ def _run_migration(connection: sqlite3.Connection, version: int) -> None:
         return
     if version == 2:
         _add_column_if_missing(connection, "tasks", "workspace_root", "TEXT")
+        return
+    if version == 3:
+        _add_column_if_missing(connection, "runs", "notification_error", "TEXT")
         return
     raise SchemaVersionError(f"No migration registered for schema version {version}.")
 

@@ -17,6 +17,7 @@ def test_initialize_fresh_database_records_schema_version(tmp_path: Path) -> Non
         assert _table_exists(connection, "runs")
         assert _table_exists(connection, "run_queue")
         assert _table_exists(connection, "schema_migrations")
+        assert _column_exists(connection, "runs", "notification_error")
 
 
 def test_initialize_is_idempotent_for_current_schema(tmp_path: Path) -> None:
@@ -86,6 +87,7 @@ def test_initialize_upgrades_legacy_pr_database_without_version_table(tmp_path: 
         assert schema_version(connection) == SCHEMA_VERSION
         assert _column_exists(connection, "tasks", "enabled")
         assert _column_exists(connection, "tasks", "workspace_root")
+        assert _column_exists(connection, "runs", "notification_error")
         row = connection.execute("SELECT workspace_root FROM tasks WHERE task_id = 'legacy-task'").fetchone()
         assert row["workspace_root"] is None
 

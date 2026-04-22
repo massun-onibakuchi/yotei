@@ -499,6 +499,197 @@ def test_one_time_task_disables_after_run(tmp_path: Path, monkeypatch, capsys) -
     assert "last_status=success" in output
 
 
+def test_run_uses_persisted_workspace_not_scheduler_cwd(tmp_path: Path, monkeypatch) -> None:
+    config_path = _write_config(tmp_path)
+    task_workspace = tmp_path / "task-workspace"
+    scheduler_workspace = tmp_path / "scheduler-workspace"
+    task_workspace.mkdir()
+    scheduler_workspace.mkdir()
+    main(
+        [
+            "--config",
+            str(config_path),
+            "schedule",
+            "--task",
+            "workspace-run-task",
+            "--when",
+            "every 30m",
+            "--prompt",
+            "run in task workspace",
+            "--chat-id",
+            "0",
+            "--workspace",
+            str(task_workspace),
+        ]
+    )
+    with closing(connect(config_path.parent / "state.sqlite3")) as connection:
+        connection.execute("UPDATE tasks SET next_run_at = ? WHERE task_id = ?", (utc_now(), "workspace-run-task"))
+        connection.commit()
+
+    seen_workspaces: list[Path] = []
+
+    def fake_run_codex_task(*args, **kwargs):
+        seen_workspaces.append(kwargs["workspace_root"])
+        return RunResult(
+            success=True,
+            exit_code=0,
+            session_id="session-1",
+            summary="done",
+            error_text=None,
+            log_path=tmp_path / "run.log",
+        )
+
+    monkeypatch.setattr(cli, "run_codex_task", fake_run_codex_task)
+    monkeypatch.setattr(cli, "send_telegram_message", lambda *args, **kwargs: None)
+    monkeypatch.chdir(scheduler_workspace)
+
+    assert main(["--config", str(config_path), "run", "--once"]) == 0
+
+    assert seen_workspaces == [task_workspace.resolve()]
+
+
+def test_missing_persisted_workspace_fails_run_without_invoking_codex(tmp_path: Path, monkeypatch) -> None:
+    config_path = _write_config(tmp_path)
+    task_workspace = tmp_path / "deleted-workspace"
+    task_workspace.mkdir()
+    main(
+        [
+            "--config",
+            str(config_path),
+            "schedule",
+            "--task",
+            "missing-workspace-task",
+            "--when",
+            "every 30m",
+            "--prompt",
+            "prompt",
+            "--chat-id",
+            "0",
+            "--workspace",
+            str(task_workspace),
+        ]
+    )
+    task_workspace.rmdir()
+    with closing(connect(config_path.parent / "state.sqlite3")) as connection:
+        connection.execute("UPDATE tasks SET next_run_at = ? WHERE task_id = ?", (utc_now(), "missing-workspace-task"))
+        connection.commit()
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("Codex should not run when the persisted workspace is unavailable")
+
+    monkeypatch.setattr(cli, "run_codex_task", fail_if_called)
+    monkeypatch.setattr(cli, "send_telegram_message", lambda *args, **kwargs: None)
+
+    assert main(["--config", str(config_path), "run", "--once"]) == 0
+
+    with closing(connect(config_path.parent / "state.sqlite3")) as connection:
+        run = connection.execute(
+            "SELECT status, summary, error_text FROM runs WHERE task_id = ?",
+            ("missing-workspace-task",),
+        ).fetchone()
+        assert run["status"] == "failed"
+        assert "workspace is unavailable" in run["summary"]
+        assert "edit --task missing-workspace-task --workspace" in run["error_text"]
+        assert not cli.has_running_run(connection, "missing-workspace-task")
+
+
+def test_resume_run_reuses_session_in_persisted_workspace(tmp_path: Path, monkeypatch) -> None:
+    config_path = _write_config(tmp_path)
+    task_workspace = tmp_path / "resume-workspace"
+    task_workspace.mkdir()
+    main(
+        [
+            "--config",
+            str(config_path),
+            "schedule",
+            "--task",
+            "resume-workspace-task",
+            "--when",
+            "every 30m",
+            "--prompt",
+            "resume prompt",
+            "--session-mode",
+            "resume",
+            "--chat-id",
+            "0",
+            "--workspace",
+            str(task_workspace),
+        ]
+    )
+    with closing(connect(config_path.parent / "state.sqlite3")) as connection:
+        connection.execute(
+            "UPDATE tasks SET session_id = ?, next_run_at = ? WHERE task_id = ?",
+            ("session-old", utc_now(), "resume-workspace-task"),
+        )
+        connection.commit()
+
+    seen_calls: list[tuple[str | None, Path]] = []
+
+    def fake_run_codex_task(*args, **kwargs):
+        seen_calls.append((kwargs["session_id"], kwargs["workspace_root"]))
+        return RunResult(
+            success=True,
+            exit_code=0,
+            session_id="session-old",
+            summary="done",
+            error_text=None,
+            log_path=tmp_path / "run.log",
+        )
+
+    monkeypatch.setattr(cli, "run_codex_task", fake_run_codex_task)
+    monkeypatch.setattr(cli, "send_telegram_message", lambda *args, **kwargs: None)
+
+    assert main(["--config", str(config_path), "run", "--once"]) == 0
+
+    assert seen_calls == [("session-old", task_workspace.resolve())]
+    assert _task_row(config_path, "resume-workspace-task")["session_id"] == "session-old"
+
+
+def test_missing_codex_binary_fails_run_without_crashing_loop(tmp_path: Path, monkeypatch) -> None:
+    config_path = _write_config(tmp_path)
+    config_text = config_path.read_text(encoding="utf-8").replace(
+        'binary = "codex"',
+        'binary = "definitely-missing-yotei-codex"',
+    )
+    config_path.write_text(config_text, encoding="utf-8")
+    task_workspace = tmp_path / "binary-workspace"
+    task_workspace.mkdir()
+    main(
+        [
+            "--config",
+            str(config_path),
+            "schedule",
+            "--task",
+            "missing-binary-task",
+            "--when",
+            "every 30m",
+            "--prompt",
+            "prompt",
+            "--chat-id",
+            "0",
+            "--workspace",
+            str(task_workspace),
+        ]
+    )
+    with closing(connect(config_path.parent / "state.sqlite3")) as connection:
+        connection.execute("UPDATE tasks SET next_run_at = ? WHERE task_id = ?", (utc_now(), "missing-binary-task"))
+        connection.commit()
+
+    monkeypatch.setattr(cli, "send_telegram_message", lambda *args, **kwargs: None)
+
+    assert main(["--config", str(config_path), "run", "--once"]) == 0
+
+    with closing(connect(config_path.parent / "state.sqlite3")) as connection:
+        run = connection.execute(
+            "SELECT status, exit_code, error_text FROM runs WHERE task_id = ?",
+            ("missing-binary-task",),
+        ).fetchone()
+        assert run["status"] == "failed"
+        assert run["exit_code"] == 127
+        assert "Failed to start Codex command" in run["error_text"]
+        assert not cli.has_running_run(connection, "missing-binary-task")
+
+
 def test_unexpected_codex_crash_marks_run_failed_without_blocking_task(tmp_path: Path, monkeypatch) -> None:
     config_path = _write_config(tmp_path)
     main(

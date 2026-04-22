@@ -68,6 +68,17 @@ def test_schedule_and_list_task(tmp_path: Path, capsys) -> None:
     assert "enabled=True" in output
 
 
+def test_run_help_documents_single_runner_contract(capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["run", "--help"])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "one active runner per state database" in output
+    assert "--once" in output
+    assert "one scheduling pass" in output
+
+
 def test_schedule_captures_current_directory_as_workspace(tmp_path: Path, monkeypatch) -> None:
     config_path = _write_config(tmp_path)
     workspace = tmp_path / "workspace"

@@ -97,8 +97,19 @@ def build_parser() -> ArgumentParser:
     set_model = config_subparsers.add_parser("set-default-model", help="Update the default model")
     set_model.add_argument("model", help="Model name from the allowlist")
 
-    run_parser = subparsers.add_parser("run", help="Run the scheduler loop")
-    run_parser.add_argument("--once", action="store_true", help="Process one scheduling pass and exit")
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Run the scheduler loop",
+        description=(
+            "Run the scheduler loop. Start only one active runner per state database; "
+            "Yotei does not enforce cross-process locking yet."
+        ),
+    )
+    run_parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Process one scheduling pass and exit; do not start a long-running scheduler.",
+    )
 
     return parser
 

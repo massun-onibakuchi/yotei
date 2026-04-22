@@ -22,7 +22,7 @@ directory stores full run output referenced by the DB.
 
 ## After You Restore
 
-1. Install the same or newer compatible `yotei` build.
+1. Install the same or newer compatible `yotei-runner` build.
 2. Put the config, state DB, and logs back into the same XDG locations, or run
    Yotei with `--config <path>` if you are restoring elsewhere.
 3. Run `yotei status`.

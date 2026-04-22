@@ -3,8 +3,8 @@ requires = ["setuptools>=80"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "yotei"
-version = "0.1.0"
+name = "yotei-runner"
+version = "0.1.1"
 description = "Scheduler for unattended Codex tasks with Telegram notifications"
 readme = "README.md"
 requires-python = ">=3.12"

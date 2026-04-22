@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from datetime import datetime
 from pathlib import Path
 from time import sleep
@@ -45,6 +45,17 @@ from .runner import run_codex_task
 from .schedule import is_one_time, next_run_at, parse_schedule
 
 
+SCHEDULE_GRAMMAR_HELP = """Supported schedules:
+  in <int>m, in <int>h, once in <int>m, once in <int>h
+  every <int>m, every <int>h
+  daily H:MM, weekdays H:MM, mon,wed H:MM
+  cron "<minute> <hour> <day-of-month> <month> <day-of-week>"
+
+Cron supports five numeric fields with *, comma lists, ranges, and slash steps.
+It does not support names, ?, L, W, #, wraparound ranges, or advanced cron semantics.
+Day-of-month and day-of-week use AND semantics."""
+
+
 def build_parser() -> ArgumentParser:
     parser = ArgumentParser(
         prog="yotei",
@@ -58,7 +69,12 @@ def build_parser() -> ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    schedule_parser = subparsers.add_parser("schedule", help="Register a scheduled task")
+    schedule_parser = subparsers.add_parser(
+        "schedule",
+        help="Register a scheduled task",
+        description=SCHEDULE_GRAMMAR_HELP,
+        formatter_class=RawDescriptionHelpFormatter,
+    )
     schedule_parser.add_argument("--task", required=True, help="Unique task identifier")
     schedule_parser.add_argument("--when", required=True, help="Human-friendly schedule string")
     schedule_parser.add_argument("--prompt", required=True, help="Inline prompt to send to Codex")
@@ -77,7 +93,12 @@ def build_parser() -> ArgumentParser:
     resume_parser = subparsers.add_parser("resume", help="Resume a paused scheduled task")
     resume_parser.add_argument("--task", required=True, help="Task identifier to resume")
 
-    edit_parser = subparsers.add_parser("edit", help="Edit editable fields on a scheduled task")
+    edit_parser = subparsers.add_parser(
+        "edit",
+        help="Edit editable fields on a scheduled task",
+        description=SCHEDULE_GRAMMAR_HELP,
+        formatter_class=RawDescriptionHelpFormatter,
+    )
     edit_parser.add_argument("--task", required=True, help="Task identifier to edit")
     edit_parser.add_argument("--when", help="Replacement schedule string")
     edit_parser.add_argument("--prompt", help="Replacement inline prompt")

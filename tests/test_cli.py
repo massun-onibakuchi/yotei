@@ -79,6 +79,18 @@ def test_run_help_documents_single_runner_contract(capsys) -> None:
     assert "one scheduling pass" in output
 
 
+def test_schedule_help_documents_supported_grammar(capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["schedule", "--help"])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "once in <int>m" in output
+    assert 'cron "<minute> <hour> <day-of-month> <month> <day-of-week>"' in output
+    assert "does not support names, ?, L, W, #" in output
+    assert "Day-of-month and day-of-week use AND semantics." in output
+
+
 def test_schedule_captures_current_directory_as_workspace(tmp_path: Path, monkeypatch) -> None:
     config_path = _write_config(tmp_path)
     workspace = tmp_path / "workspace"

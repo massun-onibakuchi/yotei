@@ -67,10 +67,11 @@ def parse_schedule(raw_text: str) -> ScheduleSpec:
         cron_body = text[6:-1].strip()
         if len(cron_body.split()) != 5:
             raise ValueError("Cron expressions must contain exactly five fields.")
+        _validate_cron_expression(cron_body)
         return ScheduleSpec(kind="cron", value=cron_body)
 
     parts = text.split(" ", 1)
-    if len(parts) == 2 and all(day in DAY_INDEX for day in parts[0].split(",")):
+    if len(parts) == 2 and ("," in parts[0] or parts[0] in DAY_INDEX):
         day_list, clock = parts
         days = day_list.split(",")
         if not days or any(day not in DAY_INDEX for day in days):
@@ -112,11 +113,19 @@ def is_one_time(spec: ScheduleSpec) -> bool:
 
 
 def _validate_clock(clock: str) -> None:
-    hour_text, minute_text = clock.split(":", 1)
+    parts = clock.split(":")
+    if (
+        len(parts) != 2
+        or len(parts[0]) not in {1, 2}
+        or len(parts[1]) != 2
+        or any(not part.isdigit() for part in parts)
+    ):
+        raise ValueError("Clock time must be H:MM or HH:MM with 24-hour values.")
+    hour_text, minute_text = parts
     hour = int(hour_text)
     minute = int(minute_text)
     if hour not in range(24) or minute not in range(60):
-        raise ValueError("Clock time must be HH:MM with 24-hour values.")
+        raise ValueError("Clock time must be H:MM or HH:MM with 24-hour values.")
 
 
 def _next_day_time(reference: datetime, allowed_days: set[int], clock: str) -> datetime:
@@ -152,20 +161,72 @@ def _cron_weekday(weekday: int) -> int:
 
 
 def _cron_matches(value: int, field: str, minimum: int, maximum: int) -> bool:
+    return value in _cron_allowed_values(field, minimum, maximum)
+
+
+def _validate_cron_expression(expression: str) -> None:
+    ranges = [(0, 59), (0, 23), (1, 31), (1, 12), (0, 6)]
+    for field, (minimum, maximum) in zip(expression.split(), ranges, strict=True):
+        _cron_allowed_values(field, minimum, maximum)
+
+
+def _cron_allowed_values(field: str, minimum: int, maximum: int) -> set[int]:
     allowed = set[int]()
     for part in field.split(","):
+        if not part:
+            raise ValueError("Cron fields cannot contain empty list entries.")
         if part == "*":
             allowed.update(range(minimum, maximum + 1))
             continue
         if "/" in part:
             base, step_text = part.split("/", 1)
-            step = int(step_text)
-            start = minimum if base == "*" else int(base)
-            allowed.update(range(start, maximum + 1, step))
+            step = _parse_cron_step(step_text)
+            start, end = _cron_base_range(base, minimum, maximum)
+            allowed.update(range(start, end + 1, step))
             continue
         if "-" in part:
             start_text, end_text = part.split("-", 1)
-            allowed.update(range(int(start_text), int(end_text) + 1))
+            start = _parse_cron_int(start_text, minimum=minimum, maximum=maximum, label="Cron range")
+            end = _parse_cron_int(end_text, minimum=minimum, maximum=maximum, label="Cron range")
+            if start > end:
+                raise ValueError("Cron ranges must not wrap around.")
+            allowed.update(range(start, end + 1))
             continue
-        allowed.add(int(part))
-    return value in allowed
+        allowed.add(_parse_cron_int(part, minimum=minimum, maximum=maximum, label="Cron field"))
+    return allowed
+
+
+def _cron_base_range(base: str, minimum: int, maximum: int) -> tuple[int, int]:
+    if base == "*":
+        return minimum, maximum
+    if "-" in base:
+        start_text, end_text = base.split("-", 1)
+        start = _parse_cron_int(start_text, minimum=minimum, maximum=maximum, label="Cron range")
+        end = _parse_cron_int(end_text, minimum=minimum, maximum=maximum, label="Cron range")
+        if start > end:
+            raise ValueError("Cron ranges must not wrap around.")
+        return start, end
+    start = _parse_cron_int(base, minimum=minimum, maximum=maximum, label="Cron step")
+    return start, maximum
+
+
+def _parse_cron_int(text: str, *, minimum: int, maximum: int, label: str) -> int:
+    if not text.isdigit():
+        raise ValueError(
+            "Cron supports only numeric five-field expressions with *, comma lists, ranges, and slash steps."
+        )
+    value = int(text)
+    if value < minimum or value > maximum:
+        raise ValueError(f"{label} value must be between {minimum} and {maximum}.")
+    return value
+
+
+def _parse_cron_step(text: str) -> int:
+    if not text.isdigit():
+        raise ValueError(
+            "Cron supports only numeric five-field expressions with *, comma lists, ranges, and slash steps."
+        )
+    value = int(text)
+    if value <= 0:
+        raise ValueError("Cron step value must be greater than zero.")
+    return value

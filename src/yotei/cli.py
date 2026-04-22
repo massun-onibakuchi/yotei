@@ -6,6 +6,7 @@ from argparse import ArgumentParser
 from datetime import datetime
 from pathlib import Path
 from time import sleep
+from urllib.parse import quote
 import json
 import sqlite3
 import sys
@@ -30,6 +31,7 @@ from .db import (
     initialize,
     list_tasks,
     mark_interrupted_runs,
+    record_notification_error,
     remove_queue_item,
     get_task,
     set_task_enabled,
@@ -374,13 +376,13 @@ def _execute_task(config, connection, row) -> None:
         )
         return
     if config.notifications.send_on_start:
-        notification_error = send_telegram_message(
+        notification_error = _send_notification(
             config,
             row["chat_id"],
             format_notification("start", row["task_id"], row["model"], "Run started.", row["session_id"]),
         )
         if notification_error:
-            _log_notification_error(config, run_id, notification_error)
+            _handle_notification_error(config, connection, run_id, notification_error)
     try:
         result = run_codex_task(
             config,
@@ -410,13 +412,13 @@ def _execute_task(config, connection, row) -> None:
             error_text=error_text,
         )
         if config.notifications.send_on_failure:
-            notification_error = send_telegram_message(
+            notification_error = _send_notification(
                 config,
                 row["chat_id"],
                 format_notification("failure", row["task_id"], row["model"], str(exc), row["session_id"]),
             )
             if notification_error:
-                _log_notification_error(config, run_id, notification_error)
+                _handle_notification_error(config, connection, run_id, notification_error)
         return
     update_run_log_path(connection, run_id, str(result.log_path))
     finish_run(
@@ -432,7 +434,7 @@ def _execute_task(config, connection, row) -> None:
         not result.success and config.notifications.send_on_failure
     )
     if should_notify:
-        notification_error = send_telegram_message(
+        notification_error = _send_notification(
             config,
             row["chat_id"],
             format_notification(
@@ -444,7 +446,7 @@ def _execute_task(config, connection, row) -> None:
             ),
         )
         if notification_error:
-            _log_notification_error(config, run_id, notification_error)
+            _handle_notification_error(config, connection, run_id, notification_error)
 
 
 def _finish_unavailable_workspace_run(config, connection, row, run_id: str, reason: str) -> None:
@@ -465,13 +467,13 @@ def _finish_unavailable_workspace_run(config, connection, row, run_id: str, reas
         error_text=message,
     )
     if config.notifications.send_on_failure:
-        notification_error = send_telegram_message(
+        notification_error = _send_notification(
             config,
             row["chat_id"],
             format_notification("failure", row["task_id"], row["model"], message, row["session_id"]),
         )
         if notification_error:
-            _log_notification_error(config, run_id, notification_error)
+            _handle_notification_error(config, connection, run_id, notification_error)
 
 
 def _to_utc_iso(value: datetime) -> str:
@@ -520,6 +522,31 @@ def _log_scheduler_error(config, exc: Exception) -> None:
         f"unexpected scheduler loop error; retrying after {config.scheduler.error_backoff_seconds}s: {exc}",
         file=sys.stderr,
     )
+
+
+def _handle_notification_error(config, connection, run_id: str, message: str) -> None:
+    sanitized = _sanitize_notification_error(config, message)
+    try:
+        record_notification_error(connection, run_id, sanitized)
+    except sqlite3.Error as exc:
+        print(f"failed to record notification error: {exc}", file=sys.stderr)
+    _log_notification_error(config, run_id, sanitized)
+
+
+def _send_notification(config, chat_id: str, text: str) -> str | None:
+    try:
+        return send_telegram_message(config, chat_id, text)
+    except Exception as exc:
+        return f"Telegram notification failed: {type(exc).__name__}."
+
+
+def _sanitize_notification_error(config, message: str) -> str:
+    token = getattr(getattr(config, "telegram", None), "bot_token", None)
+    sanitized = message
+    if token and token != "replace-me":
+        sanitized = sanitized.replace(token, "[redacted]")
+        sanitized = sanitized.replace(quote(token, safe=""), "[redacted]")
+    return " ".join(sanitized.split())[:500]
 
 
 def _log_notification_error(config, run_id: str, message: str) -> None:

@@ -784,8 +784,8 @@ def test_codex_crash_still_finishes_run_when_crash_log_write_fails(
         assert not cli.has_running_run(connection, "crashy-log-task")
 
 
-def test_notification_failures_are_logged_without_failing_run(tmp_path: Path, monkeypatch) -> None:
-    config_path = _write_config(tmp_path)
+def test_notification_failures_are_recorded_without_failing_run(tmp_path: Path, monkeypatch) -> None:
+    config_path = _write_config(tmp_path, bot_token="secret:token")
     main(
         [
             "--config",
@@ -817,12 +817,82 @@ def test_notification_failures_are_logged_without_failing_run(tmp_path: Path, mo
             log_path=tmp_path / "run.log",
         ),
     )
-    monkeypatch.setattr(cli, "send_telegram_message", lambda *args, **kwargs: "Telegram notification failed.")
+    monkeypatch.setattr(
+        cli,
+        "send_telegram_message",
+        lambda *args, **kwargs: "Telegram notification failed for secret:token and secret%3Atoken.",
+    )
 
     assert main(["--config", str(config_path), "run", "--once"]) == 0
 
     scheduler_log = config_path.parent / "logs" / "scheduler.log"
-    assert "notification failure for run" in scheduler_log.read_text(encoding="utf-8")
+    scheduler_log_text = scheduler_log.read_text(encoding="utf-8")
+    assert "notification failure for run" in scheduler_log_text
+    assert "secret:token" not in scheduler_log_text
+    assert "secret%3Atoken" not in scheduler_log_text
+    with closing(connect(config_path.parent / "state.sqlite3")) as connection:
+        run = connection.execute(
+            "SELECT status, summary, error_text, notification_error FROM runs WHERE task_id = ?",
+            ("notify-task",),
+        ).fetchone()
+        assert run["status"] == "success"
+        assert run["summary"] == "done"
+        assert run["error_text"] is None
+        assert "Telegram notification failed for [redacted] and [redacted]." in run["notification_error"]
+        assert "secret:token" not in run["notification_error"]
+        assert "secret%3Atoken" not in run["notification_error"]
+
+
+def test_notification_exception_is_recorded_without_failing_successful_run(tmp_path: Path, monkeypatch) -> None:
+    config_path = _write_config(tmp_path, bot_token="secret-token")
+    main(
+        [
+            "--config",
+            str(config_path),
+            "schedule",
+            "--task",
+            "notify-exception-task",
+            "--when",
+            "in 5m",
+            "--prompt",
+            "notify",
+            "--chat-id",
+            "0",
+        ]
+    )
+    with closing(connect(config_path.parent / "state.sqlite3")) as connection:
+        connection.execute("UPDATE tasks SET next_run_at = ? WHERE task_id = ?", (utc_now(), "notify-exception-task"))
+        connection.commit()
+
+    monkeypatch.setattr(
+        cli,
+        "run_codex_task",
+        lambda *args, **kwargs: RunResult(
+            success=True,
+            exit_code=0,
+            session_id="session-1",
+            summary="done",
+            error_text=None,
+            log_path=tmp_path / "run.log",
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "send_telegram_message",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("secret-token leaked")),
+    )
+
+    assert main(["--config", str(config_path), "run", "--once"]) == 0
+
+    with closing(connect(config_path.parent / "state.sqlite3")) as connection:
+        run = connection.execute(
+            "SELECT status, error_text, notification_error FROM runs WHERE task_id = ?",
+            ("notify-exception-task",),
+        ).fetchone()
+        assert run["status"] == "success"
+        assert run["error_text"] is None
+        assert "Telegram notification failed: OSError." in run["notification_error"]
+        assert "secret-token" not in run["notification_error"]
 
 
 def test_notification_error_logging_falls_back_when_log_path_is_unwritable(tmp_path: Path, capsys) -> None:

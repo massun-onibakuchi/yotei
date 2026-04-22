@@ -64,6 +64,7 @@ def build_parser() -> ArgumentParser:
     schedule_parser.add_argument("--model", help="Override the default model")
     schedule_parser.add_argument("--session-mode", choices=["fresh", "resume"], default="fresh")
     schedule_parser.add_argument("--chat-id", required=True, help="Telegram chat id for notifications")
+    schedule_parser.add_argument("--workspace", help="Workspace directory for this task. Defaults to the current directory.")
 
     status_parser = subparsers.add_parser("status", help="Show scheduled task status")
     status_parser.add_argument("--json", action="store_true", help="Render task output as JSON")
@@ -151,6 +152,7 @@ def _handle_schedule(args, config, connection) -> int:
     model = args.model or config.codex.default_model
     if model not in config.codex.allowed_models:
         raise ValueError(f"Model {model!r} is not allowed. Allowed models: {', '.join(config.codex.allowed_models)}")
+    workspace_root = _resolve_workspace(args.workspace)
     now = datetime.now(ZoneInfo(config.scheduler.timezone))
     first_run = next_run_at(schedule_spec, now, config.scheduler.timezone)
     task = TaskRecord(
@@ -164,6 +166,7 @@ def _handle_schedule(args, config, connection) -> int:
         session_mode=args.session_mode,
         session_id=None,
         chat_id=args.chat_id,
+        workspace_root=str(workspace_root),
         next_run_at=_to_utc_iso(first_run),
         last_run_at=None,
         enabled=True,
@@ -412,6 +415,17 @@ def _execute_task(config, connection, row, workspace_root: Path) -> None:
 
 def _to_utc_iso(value: datetime) -> str:
     return value.astimezone(ZoneInfo("UTC")).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _resolve_workspace(raw_workspace: str | None) -> Path:
+    try:
+        workspace = Path(raw_workspace).expanduser() if raw_workspace else Path.cwd()
+    except RuntimeError as exc:
+        raise ValueError(f"Workspace path cannot be expanded: {raw_workspace}") from exc
+    resolved = workspace.resolve()
+    if not resolved.exists() or not resolved.is_dir():
+        raise ValueError(f"Workspace path does not exist or is not a directory: {resolved}")
+    return resolved
 
 
 def _sleep_or_interrupted(seconds: int) -> bool:

@@ -13,9 +13,11 @@ The scheduled agent runner needs durable task state, queued same-task overlaps, 
 Use an internal scheduler loop backed by SQLite for tasks, runs, enabled/paused state, and queue state. Use log files for full run output. Use Codex JSONL events as the runtime source of session IDs.
 
 Schema ownership is tracked in `schema_migrations`. Version `1` is the imported
-baseline scheduler schema. Future schema changes must add a new migration
-function in `yotei.db`, increment `SCHEMA_VERSION`, and include tests for both a
-fresh database and an upgraded database from the previous version.
+baseline scheduler schema. Version `2` adds nullable per-task `workspace_root`
+storage for newly scheduled tasks while preserving legacy rows. Future schema
+changes must add a new migration function in `yotei.db`, increment
+`SCHEMA_VERSION`, and include tests for both a fresh database and an upgraded
+database from the previous version.
 
 ## Consequences
 

@@ -68,6 +68,117 @@ def test_schedule_and_list_task(tmp_path: Path, capsys) -> None:
     assert "enabled=True" in output
 
 
+def test_schedule_captures_current_directory_as_workspace(tmp_path: Path, monkeypatch) -> None:
+    config_path = _write_config(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "schedule",
+            "--task",
+            "workspace-default",
+            "--when",
+            "every 30m",
+            "--prompt",
+            "Review the repository.",
+            "--chat-id",
+            "12345",
+        ]
+    )
+
+    assert exit_code == 0
+    row = _task_row(config_path, "workspace-default")
+    assert row["workspace_root"] == str(workspace.resolve())
+
+
+def test_schedule_accepts_explicit_workspace(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path)
+    workspace = tmp_path / "explicit-workspace"
+    workspace.mkdir()
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "schedule",
+            "--task",
+            "workspace-explicit",
+            "--when",
+            "every 30m",
+            "--prompt",
+            "Review the repository.",
+            "--chat-id",
+            "12345",
+            "--workspace",
+            str(workspace),
+        ]
+    )
+
+    assert exit_code == 0
+    row = _task_row(config_path, "workspace-explicit")
+    assert row["workspace_root"] == str(workspace.resolve())
+
+
+def test_schedule_rejects_missing_workspace(tmp_path: Path, capsys) -> None:
+    config_path = _write_config(tmp_path)
+    missing_workspace = tmp_path / "missing-workspace"
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "schedule",
+            "--task",
+            "workspace-missing",
+            "--when",
+            "every 30m",
+            "--prompt",
+            "Review the repository.",
+            "--chat-id",
+            "12345",
+            "--workspace",
+            str(missing_workspace),
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "Workspace path does not exist" in captured.err
+    assert _task_row(config_path, "workspace-missing") is None
+
+
+def test_schedule_rejects_unexpandable_workspace(tmp_path: Path, capsys) -> None:
+    config_path = _write_config(tmp_path)
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "schedule",
+            "--task",
+            "workspace-bad-home",
+            "--when",
+            "every 30m",
+            "--prompt",
+            "Review the repository.",
+            "--chat-id",
+            "12345",
+            "--workspace",
+            "~yotei-user-that-should-not-exist/workspace",
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "Workspace path cannot be expanded" in captured.err
+    assert "Traceback" not in captured.err
+    assert _task_row(config_path, "workspace-bad-home") is None
+
+
 def test_operational_errors_are_reported_without_traceback(tmp_path: Path, capsys) -> None:
     missing_config = tmp_path / "missing.toml"
 

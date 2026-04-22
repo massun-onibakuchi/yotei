@@ -9,7 +9,7 @@ import sqlite3
 import uuid
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class SchemaVersionError(RuntimeError):
@@ -28,6 +28,7 @@ class TaskRecord:
     session_mode: str
     session_id: str | None
     chat_id: str
+    workspace_root: str | None
     next_run_at: str
     last_run_at: str | None
     enabled: bool = True
@@ -56,6 +57,7 @@ def initialize(connection: sqlite3.Connection) -> None:
             session_mode TEXT NOT NULL,
             session_id TEXT,
             chat_id TEXT NOT NULL,
+            workspace_root TEXT,
             next_run_at TEXT NOT NULL,
             last_run_at TEXT,
             enabled INTEGER NOT NULL DEFAULT 1,
@@ -90,13 +92,15 @@ def initialize(connection: sqlite3.Connection) -> None:
 
 
 def create_task(connection: sqlite3.Connection, task: TaskRecord) -> None:
+    if not task.workspace_root:
+        raise ValueError("New tasks must include workspace_root.")
     now = utc_now()
     connection.execute(
         """
         INSERT INTO tasks (
             task_id, schedule_text, schedule_kind, schedule_value, prompt, agent, model,
-            session_mode, session_id, chat_id, next_run_at, last_run_at, enabled, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            session_mode, session_id, chat_id, workspace_root, next_run_at, last_run_at, enabled, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             task.task_id,
@@ -109,6 +113,7 @@ def create_task(connection: sqlite3.Connection, task: TaskRecord) -> None:
             task.session_mode,
             task.session_id,
             task.chat_id,
+            task.workspace_root,
             task.next_run_at,
             task.last_run_at,
             1 if task.enabled else 0,
@@ -397,6 +402,9 @@ def schema_version(connection: sqlite3.Connection) -> int:
 
 def _run_migration(connection: sqlite3.Connection, version: int) -> None:
     if version == 1:
+        return
+    if version == 2:
+        _add_column_if_missing(connection, "tasks", "workspace_root", "TEXT")
         return
     raise SchemaVersionError(f"No migration registered for schema version {version}.")
 

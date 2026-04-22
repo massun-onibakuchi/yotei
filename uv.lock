@@ -162,8 +162,8 @@ wheels = [
 ]
 
 [[package]]
-name = "yotei"
-version = "0.1.0"
+name = "yotei-runner"
+version = "0.1.1"
 source = { editable = "." }
 
 [package.optional-dependencies]

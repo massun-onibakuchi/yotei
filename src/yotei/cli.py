@@ -129,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "config":
             return _handle_config(args)
         if args.command == "run":
-            return _handle_run(args, config, connection, Path.cwd())
+            return _handle_run(args, config, connection)
         parser.error(f"Unknown command {args.command!r}")
         return 2
     except (
@@ -296,11 +296,11 @@ def _handle_config_init(args) -> int:
     return 0
 
 
-def _handle_run(args, config, connection, workspace_root: Path) -> int:
+def _handle_run(args, config, connection) -> int:
     mark_interrupted_runs(connection)
     while True:
         try:
-            _process_due_tasks(config, connection, workspace_root)
+            _process_due_tasks(config, connection)
         except KeyboardInterrupt:
             return _handle_user_interrupt()
         except Exception as exc:
@@ -316,14 +316,14 @@ def _handle_run(args, config, connection, workspace_root: Path) -> int:
             return _handle_user_interrupt()
 
 
-def _process_due_tasks(config, connection, workspace_root: Path) -> None:
+def _process_due_tasks(config, connection) -> None:
     now_iso = utc_now()
     for row in due_tasks(connection, now_iso):
         spec = parse_schedule(row["schedule_text"])
         if has_running_run(connection, row["task_id"]):
             enqueue_run(connection, row["task_id"], row["next_run_at"])
         else:
-            _execute_task(config, connection, row, workspace_root)
+            _execute_task(config, connection, row)
 
         if is_one_time(spec):
             disable_task(connection, row["task_id"])
@@ -337,14 +337,30 @@ def _process_due_tasks(config, connection, workspace_root: Path) -> None:
 
     queued = dequeue_next(connection)
     if queued and not has_running_run(connection, queued["task_id"]):
-        _execute_task(config, connection, queued, workspace_root)
+        _execute_task(config, connection, queued)
         remove_queue_item(connection, queued["queue_id"])
 
 
-def _execute_task(config, connection, row, workspace_root: Path) -> None:
+def _execute_task(config, connection, row) -> None:
     run_id = start_run(connection, row["task_id"], str(config.paths.logs_dir / "pending.log"))
     if not row["workspace_root"]:
-        _finish_missing_workspace_run(config, connection, row, run_id)
+        _finish_unavailable_workspace_run(
+            config,
+            connection,
+            row,
+            run_id,
+            "Task is missing workspace_root.",
+        )
+        return
+    workspace_root = Path(row["workspace_root"])
+    if not workspace_root.exists() or not workspace_root.is_dir():
+        _finish_unavailable_workspace_run(
+            config,
+            connection,
+            row,
+            run_id,
+            f"Task workspace is unavailable: {workspace_root}",
+        )
         return
     if config.notifications.send_on_start:
         notification_error = send_telegram_message(
@@ -420,14 +436,14 @@ def _execute_task(config, connection, row, workspace_root: Path) -> None:
             _log_notification_error(config, run_id, notification_error)
 
 
-def _finish_missing_workspace_run(config, connection, row, run_id: str) -> None:
-    message = f"Task is missing workspace_root. Repair it with: yotei edit --task {row['task_id']} --workspace <path>"
+def _finish_unavailable_workspace_run(config, connection, row, run_id: str, reason: str) -> None:
+    message = f"{reason} Repair it with: yotei edit --task {row['task_id']} --workspace <path>"
     log_path = config.paths.logs_dir / f"{run_id}.log"
     try:
         log_path.write_text(message + "\n", encoding="utf-8")
         update_run_log_path(connection, run_id, str(log_path))
     except OSError as log_exc:
-        print(f"failed to write missing-workspace log: {log_exc}", file=sys.stderr)
+        print(f"failed to write workspace error log: {log_exc}", file=sys.stderr)
     finish_run(
         connection,
         run_id,

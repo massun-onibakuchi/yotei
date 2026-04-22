@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "Scheduler for unattended Codex tasks with Telegram notifications"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = []
 authors = [
     { name = "massun-onibakuchi" },

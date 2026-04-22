@@ -83,6 +83,7 @@ def build_parser() -> ArgumentParser:
     edit_parser.add_argument("--model", help="Replacement model")
     edit_parser.add_argument("--session-mode", choices=["fresh", "resume"], help="Replacement session mode")
     edit_parser.add_argument("--chat-id", help="Replacement Telegram chat id")
+    edit_parser.add_argument("--workspace", help="Replacement workspace directory")
 
     remove_parser = subparsers.add_parser("remove", help="Remove a scheduled task")
     remove_parser.add_argument("--task", required=True, help="Task identifier to remove")
@@ -194,6 +195,7 @@ def _handle_status(args, connection) -> int:
                     f"session_mode={row['session_mode']}",
                     f"session_id={row['session_id'] or '-'}",
                     f"enabled={bool(row['enabled'])}",
+                    f"workspace={row['workspace_root'] or 'needs workspace'}",
                     f"queued={row['queued_runs']}",
                     f"last_status={row['last_status'] or 'never'}",
                 ]
@@ -255,6 +257,7 @@ def _handle_edit(args, config, connection) -> int:
     if args.when:
         next_run = next_run_at_for_edit(schedule_spec, config)
         next_run_at = _to_utc_iso(next_run)
+    workspace_root = str(_resolve_workspace(args.workspace)) if args.workspace else row["workspace_root"]
 
     update_task(
         connection,
@@ -268,6 +271,7 @@ def _handle_edit(args, config, connection) -> int:
         session_mode=session_mode,
         session_id=session_id,
         chat_id=args.chat_id or row["chat_id"],
+        workspace_root=workspace_root,
         next_run_at=next_run_at,
     )
     print(f"Edited task {args.task}.")
@@ -339,6 +343,9 @@ def _process_due_tasks(config, connection, workspace_root: Path) -> None:
 
 def _execute_task(config, connection, row, workspace_root: Path) -> None:
     run_id = start_run(connection, row["task_id"], str(config.paths.logs_dir / "pending.log"))
+    if not row["workspace_root"]:
+        _finish_missing_workspace_run(config, connection, row, run_id)
+        return
     if config.notifications.send_on_start:
         notification_error = send_telegram_message(
             config,
@@ -408,6 +415,33 @@ def _execute_task(config, connection, row, workspace_root: Path) -> None:
                 result.summary,
                 result.session_id,
             ),
+        )
+        if notification_error:
+            _log_notification_error(config, run_id, notification_error)
+
+
+def _finish_missing_workspace_run(config, connection, row, run_id: str) -> None:
+    message = f"Task is missing workspace_root. Repair it with: yotei edit --task {row['task_id']} --workspace <path>"
+    log_path = config.paths.logs_dir / f"{run_id}.log"
+    try:
+        log_path.write_text(message + "\n", encoding="utf-8")
+        update_run_log_path(connection, run_id, str(log_path))
+    except OSError as log_exc:
+        print(f"failed to write missing-workspace log: {log_exc}", file=sys.stderr)
+    finish_run(
+        connection,
+        run_id,
+        status="failed",
+        summary=message,
+        exit_code=1,
+        session_id=row["session_id"],
+        error_text=message,
+    )
+    if config.notifications.send_on_failure:
+        notification_error = send_telegram_message(
+            config,
+            row["chat_id"],
+            format_notification("failure", row["task_id"], row["model"], message, row["session_id"]),
         )
         if notification_error:
             _log_notification_error(config, run_id, notification_error)

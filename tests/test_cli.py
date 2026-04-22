@@ -366,6 +366,83 @@ def test_pause_resume_and_edit_task(tmp_path: Path, capsys) -> None:
     assert row["enabled"] == 1
 
 
+def test_edit_workspace_updates_task_workspace(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path)
+    old_workspace = tmp_path / "old-workspace"
+    new_workspace = tmp_path / "new-workspace"
+    old_workspace.mkdir()
+    new_workspace.mkdir()
+    main(
+        [
+            "--config",
+            str(config_path),
+            "schedule",
+            "--task",
+            "workspace-edit-task",
+            "--when",
+            "every 30m",
+            "--prompt",
+            "prompt",
+            "--chat-id",
+            "0",
+            "--workspace",
+            str(old_workspace),
+        ]
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "edit",
+            "--task",
+            "workspace-edit-task",
+            "--workspace",
+            str(new_workspace),
+        ]
+    )
+
+    assert exit_code == 0
+    row = _task_row(config_path, "workspace-edit-task")
+    assert row["workspace_root"] == str(new_workspace.resolve())
+
+
+def test_status_shows_workspace_and_legacy_needs_workspace(tmp_path: Path, capsys) -> None:
+    config_path = _write_config(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    main(
+        [
+            "--config",
+            str(config_path),
+            "schedule",
+            "--task",
+            "workspace-status-task",
+            "--when",
+            "every 30m",
+            "--prompt",
+            "prompt",
+            "--chat-id",
+            "0",
+            "--workspace",
+            str(workspace),
+        ]
+    )
+    assert main(["--config", str(config_path), "status"]) == 0
+    output = capsys.readouterr().out
+    assert f"workspace={workspace.resolve()}" in output
+
+    with closing(connect(config_path.parent / "state.sqlite3")) as connection:
+        connection.execute("UPDATE tasks SET workspace_root = NULL WHERE task_id = ?", ("workspace-status-task",))
+        connection.commit()
+
+    assert main(["--config", str(config_path), "status"]) == 0
+
+    output = capsys.readouterr().out
+    assert "workspace-status-task" in output
+    assert "workspace=needs workspace" in output
+
+
 def test_removed_legacy_subcommands_are_rejected(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path)
     for legacy_name in ("list", "unregister", "daemon"):
@@ -555,6 +632,48 @@ def test_notification_error_logging_falls_back_when_log_path_is_unwritable(tmp_p
 
     captured = capsys.readouterr()
     assert "failed to write notification log" in captured.err
+
+
+def test_legacy_missing_workspace_fails_run_without_invoking_codex(tmp_path: Path, monkeypatch) -> None:
+    config_path = _write_config(tmp_path)
+    main(
+        [
+            "--config",
+            str(config_path),
+            "schedule",
+            "--task",
+            "legacy-workspace-task",
+            "--when",
+            "every 30m",
+            "--prompt",
+            "prompt",
+            "--chat-id",
+            "0",
+        ]
+    )
+    with closing(connect(config_path.parent / "state.sqlite3")) as connection:
+        connection.execute(
+            "UPDATE tasks SET workspace_root = NULL, next_run_at = ? WHERE task_id = ?",
+            (utc_now(), "legacy-workspace-task"),
+        )
+        connection.commit()
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("Codex should not run without a workspace_root")
+
+    monkeypatch.setattr(cli, "run_codex_task", fail_if_called)
+    monkeypatch.setattr(cli, "send_telegram_message", lambda *args, **kwargs: None)
+
+    assert main(["--config", str(config_path), "run", "--once"]) == 0
+
+    with closing(connect(config_path.parent / "state.sqlite3")) as connection:
+        run = connection.execute(
+            "SELECT status, summary, error_text FROM runs WHERE task_id = ?",
+            ("legacy-workspace-task",),
+        ).fetchone()
+        assert run["status"] == "failed"
+        assert "edit --task legacy-workspace-task --workspace" in run["summary"]
+        assert "missing workspace_root" in run["error_text"]
 
 
 def test_queued_run_is_kept_when_execution_crashes(tmp_path: Path, monkeypatch) -> None:
